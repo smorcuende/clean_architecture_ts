@@ -5,6 +5,13 @@
     "rootDir": ".",
     "outDir": "./dist",
     "baseUrl": ".",
+    "paths": {
+      "@composition/*": ["src/composition/*"],
+      "@application/*": ["src/application/*"],
+      "@domain/*": ["src/domain/*"],
+      "@infrastructure/*": ["src/infrastructure/*"],
+      "@shared/*": ["src/shared/*"]
+    },
 
     // Environment Settings
     // See also https://aka.ms/tsconfig/module
