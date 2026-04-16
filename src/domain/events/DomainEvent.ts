@@ -1,8 +1,18 @@
+/** Base class para todos los eventos de dominio */
 export abstract class DomainEvent {
-  abstract get eventName(): string;
+  abstract readonly eventName: string;
+  abstract readonly aggregateId: string;
   protected readonly occurredOn: Date = new Date();
 
   getOccurredOn(): Date {
-    return this.occurredOn;
+    return new Date(this.occurredOn);
+  }
+
+  getAggregateId(): string {
+    return this.aggregateId;
+  }
+
+  getEventName(): string {
+    return this.eventName;
   }
 }

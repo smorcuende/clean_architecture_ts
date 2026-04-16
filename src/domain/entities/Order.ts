@@ -1,143 +1,187 @@
-import { Price } from "../value-objects/Price";
-import { DomainEvent } from "../events/DomainEvent";
+import { OrderItem } from '../value-objects/OrderItem.js';
+import { Money } from '../value-objects/Money.js';
+import { DomainEvent } from '../events/DomainEvent.js';
+import { OrderCreated, ItemAddedToOrder } from '../events/OrderEvents.js';
 
-export interface OrderItem {
-  productId: string;
-  productName: string;
-  quantity: number;
-  unitPrice: Price;
+export enum OrderStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
 }
 
+/**
+ * Aggregate Root: Order
+ * Encapsula la lógica de negocio del pedido con invariantes de dominio
+ */
 export class Order {
-  private items: OrderItem[] = [];
-  private domainEvents: DomainEvent[] = [];
-  private total: Price | null = null;
+  private readonly items: Map<string, OrderItem> = new Map();
+  private readonly domainEvents: DomainEvent[] = [];
+  private status: OrderStatus;
+  private total: Money | null = null;
 
   private constructor(
-    private readonly id: string,
-    private createdAt: Date = new Date(),
-    private status: "pending" | "confirmed" | "completed" | "cancelled" = "pending"
-  ) {}
-
-  static create(id: string): Order {
-    return new Order(id);
+    readonly id: string,
+    readonly customerId: string,
+    readonly currency: string,
+    readonly createdAt: Date
+  ) {
+    this.status = OrderStatus.PENDING;
   }
 
+  /**
+   * Factory: Crear un nuevo pedido
+   */
+  static create(id: string, customerId: string, currency: string = 'EUR'): Order {
+    if (!id?.trim()) throw new Error('Order ID cannot be empty');
+    if (!customerId?.trim()) throw new Error('Customer ID cannot be empty');
+
+    const order = new Order(id, customerId, currency, new Date());
+    
+    order.recordEvent(
+      new OrderCreated(id, customerId, order.createdAt)
+    );
+
+    return order;
+  }
+
+  /**
+   * Factory: Restaurar pedido desde persistencia
+   */
   static restore(
     id: string,
+    customerId: string,
+    currency: string,
+    status: OrderStatus,
     items: OrderItem[],
-    total: Price | null,
-    status: "pending" | "confirmed" | "completed" | "cancelled",
+    total: Money | null,
     createdAt: Date
   ): Order {
-    const order = new Order(id, createdAt, status);
-    order.items = items;
+    const order = new Order(id, customerId, currency, createdAt);
+    order.status = status;
+    
+    items.forEach(item => {
+      order.items.set(item.sku.value, item);
+    });
+    
     order.total = total;
     return order;
   }
 
-  getId(): string {
-    return this.id;
-  }
-
-  getItems(): OrderItem[] {
-    return [...this.items];
-  }
-
-  getTotal(): Price | null {
-    return this.total;
-  }
-
-  getStatus(): string {
-    return this.status;
-  }
-
-  getCreatedAt(): Date {
-    return new Date(this.createdAt);
-  }
-
+  /**
+   * Añade un item al pedido
+   * Invariante: El pedido debe estar en estado PENDING
+   */
   addItem(item: OrderItem): void {
-    if (item.quantity <= 0) {
-      throw new Error("Quantity must be greater than 0");
-    }
-    
-    // Check if item already exists
-    const existingItem = this.items.find(i => i.productId === item.productId);
-    if (existingItem) {
-      existingItem.quantity += item.quantity;
+    this.assertPending('Cannot add items to a non-pending order');
+
+    if (this.items.has(item.sku.value)) {
+      const existing = this.items.get(item.sku.value)!;
+      const newQuantity = existing.quantity.add(item.quantity);
+      const updatedItem = OrderItem.create(
+        existing.sku,
+        existing.productName,
+        newQuantity,
+        existing.unitPrice
+      );
+      this.items.set(item.sku.value, updatedItem);
     } else {
-      this.items.push({ ...item });
-    }
-    
-    this.total = null; // Reset total when items change
-  }
-
-  removeItem(productId: string): void {
-    this.items = this.items.filter(item => item.productId !== productId);
-    this.total = null; // Reset total when items change
-  }
-
-  calculateTotal(currency: "EUR" | "USD" = "EUR"): Price {
-    if (this.items.length === 0) {
-      return Price.create(0, currency);
+      this.items.set(item.sku.value, item);
     }
 
-    const total = this.items.reduce((sum, item) => {
-      const itemTotal = item.unitPrice.amount * item.quantity;
-      return sum + itemTotal;
-    }, 0);
+    this.total = null;
 
-    this.total = Price.create(total, currency);
+    this.recordEvent(
+      new ItemAddedToOrder(
+        this.id,
+        item.sku.value,
+        item.productName,
+        item.quantity.value,
+        item.unitPrice
+      )
+    );
+  }
+
+  /**
+   * Elimina un item del pedido
+   */
+  removeItem(sku: string): void {
+    this.assertPending('Cannot remove items from a non-pending order');
+    this.items.delete(sku);
+    this.total = null;
+  }
+
+  /**
+   * Calcula el total del pedido
+   * Invariante: Debe haber al menos 1 item
+   */
+  calculateTotal(): Money {
+    if (this.items.size === 0) {
+      throw new Error('Cannot calculate total of an order without items');
+    }
+
+    const totals = Array.from(this.items.values()).map(item => item.getSubtotal());
+    this.total = totals.reduce((sum, current) => sum.add(current));
+
     return this.total;
   }
 
+  getTotal(): Money | null {
+    return this.total;
+  }
+
+  getTotalOrThrow(): Money {
+    return this.total || this.calculateTotal();
+  }
+
+  /**
+   * Confirma el pedido
+   * Invariantes:
+   * - Debe estar en PENDING
+   * - Debe tener al menos 1 item
+   * - Total debe ser > 0
+   */
   confirm(): void {
-    if (this.status !== "pending") {
-      throw new Error("Only pending orders can be confirmed");
+    this.assertPending('Cannot confirm a non-pending order');
+
+    if (this.items.size === 0) {
+      throw new Error('Cannot confirm an order without items');
     }
-    if (this.items.length === 0) {
-      throw new Error("Cannot confirm an order without items");
+
+    const total = this.getTotalOrThrow();
+    if (total.isZero()) {
+      throw new Error('Cannot confirm an order with zero total');
     }
-    
-    this.status = "confirmed";
-    this.addDomainEvent({
-      type: "OrderConfirmed",
-      aggregateId: this.id,
-      occurredOn: new Date(),
-      data: { orderId: this.id, total: this.total }
-    } as DomainEvent);
+
+    this.status = OrderStatus.CONFIRMED;
   }
 
   complete(): void {
-    if (this.status !== "confirmed") {
-      throw new Error("Only confirmed orders can be completed");
+    if (this.status !== OrderStatus.CONFIRMED) {
+      throw new Error('Only confirmed orders can be completed');
     }
-    
-    this.status = "completed";
-    this.addDomainEvent({
-      type: "OrderCompleted",
-      aggregateId: this.id,
-      occurredOn: new Date(),
-      data: { orderId: this.id }
-    } as DomainEvent);
+    this.status = OrderStatus.COMPLETED;
   }
 
-  cancel(): void {
-    if (["completed", "cancelled"].includes(this.status)) {
+  cancel(_reason: string = ''): void {
+    if (this.status === OrderStatus.COMPLETED || this.status === OrderStatus.CANCELLED) {
       throw new Error(`Cannot cancel a ${this.status} order`);
     }
-    
-    this.status = "cancelled";
-    this.addDomainEvent({
-      type: "OrderCancelled",
-      aggregateId: this.id,
-      occurredOn: new Date(),
-      data: { orderId: this.id }
-    } as DomainEvent);
+    this.status = OrderStatus.CANCELLED; 
   }
 
-  addDomainEvent(event: DomainEvent): void {
-    this.domainEvents.push(event);
+  // ============ Getters ============
+
+  getStatus(): OrderStatus {
+    return this.status;
+  }
+
+  getItems(): OrderItem[] {
+    return Array.from(this.items.values());
+  }
+
+  getItemCount(): number {
+    return this.items.size;
   }
 
   getDomainEvents(): DomainEvent[] {
@@ -145,6 +189,19 @@ export class Order {
   }
 
   clearDomainEvents(): void {
-    this.domainEvents = [];
+    this.domainEvents.length = 0;
+  }
+
+  // ============ Private ============
+
+  private recordEvent(event: DomainEvent): void {
+    this.domainEvents.push(event);
+  }
+
+  private assertPending(message: string): void {
+    if (this.status !== OrderStatus.PENDING) {
+      throw new Error(message);
+    }
   }
 }
+

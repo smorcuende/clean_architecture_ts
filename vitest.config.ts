@@ -1,27 +1,23 @@
 import { defineConfig } from 'vitest/config';
-import path from 'path';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const _filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(_filename);
 
 export default defineConfig({
   test: {
-    globals: true,
-    environment: 'node',
     include: ['tests/**/*.spec.ts', 'tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist'],
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      include: ['src/**/*.ts'],
-      exclude: [
-        'node_modules/',
-        'tests/',
-        '**/*.spec.ts',
-        '**/*.test.ts',
-      ],
-    },
+    environment: 'node',
+    globals: true,
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@domain': resolve(__dirname, './src/domain'),
+      '@application': resolve(__dirname, './src/application'),
+      '@infrastructure': resolve(__dirname, './src/infrastructure'),
+      '@composition': resolve(__dirname, './src/composition'),
+      '@shared': resolve(__dirname, './src/shared'),
     },
   },
 });

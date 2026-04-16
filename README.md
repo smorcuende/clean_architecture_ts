@@ -7,28 +7,44 @@ El ejemplo en concreto es un **Servicio de Pedidos** donde puedes:
 - 📊 Calcular el total con reglas de negocio
 - 🎯 Emitir eventos de dominio
 
+# Microservicios de Pedidos
+- **Dominio**: Order, Price, SKE, Quantity, eventos de dominio.
+- **Application**: casos de uso CreateOrder, AddItemToOrder, puertos y DTOs.
+- **Infra**: respositorio InMemory, pricing estático, event bus no-op.
+- **HTTP**: endpoints mínimos con Fastiry.
+- **Composición**: container.ts como composition root.
+- **Tests**: dominio + aceptación de casos de uso.
+
+# Comportamiento del sistema
+- `POST /orders` crea un pedido.
+- `POST /orders/:orderId/items` agrega una línea (SKU + qty) con precio actual.
+- Devuelve el total del pedido.
+
 ## 📁 Estructura del Proyecto
 
 ```
 src/
-├── application/          # Casos de uso y puertos
-│   ├── ports/           # Interfaces (OrderRepository)
-│   └── use-cases/       # CreateOrder
+├── application/         # Casos de uso y puertos
+│   ├── ports/           
+│   └── use-cases/       
+|   └── dto/
+|   └── errors.ts
 ├── domain/              # Lógica de negocio
-│   ├── entities/        # Order
-│   ├── events/          # DomainEvent
-│   └── value-objects/   # Price
+│   ├── entities/       
+│   ├── events/          
+│   └── value-objects/   
+|   └── errors/  
 ├── infrastructure/      # Implementaciones externas
-│   ├── http/            # API REST (Fastify)
-│   │   ├── server.ts
-│   │   └── OrdersController.ts
-│   └── persistence/     # InMemoryOrderRepository
+│   └── persistence/in-memory
+│   ├── http/
+|   └── http/controllers
+|   └── messaging
 ├── composition/         # Inyección de dependencias
 ├── shared/              # Utilitarios compartidos
 └── config/              # Configuración
 
-tests/                   # Tests con Vitest
-main.ts                 # Punto de entrada
+tests/                   
+main.ts                  
 ```
 
 ## 🚀 Instalación
